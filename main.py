@@ -5,12 +5,19 @@ import json
 import time
 from datetime import datetime
 from groq import Groq
+from flask import Flask
+import threading
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+BINANCE_SYMBOL = os.getenv("BINANCE_SYMBOL") or 'BTCUSDT'
+INTERVAL = os.getenv("INTERVAL") or '15m'
+LIMIT = int(os.getenv("LIMIT") or 100)
+INTERVAL_SECONDS = int(os.getenv("INTERVAL_SECONDS") or (15 * 60))  # 15 phút
 
 if not GROQ_API_KEY:
     raise Exception("Missing GROQ_API_KEY environment variable")
@@ -20,27 +27,21 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
 client = Groq(api_key=GROQ_API_KEY)
 
-BINANCE_SYMBOL = 'BTCUSDT'
-INTERVAL = '15m'
-LIMIT = 100
-INTERVAL_SECONDS = 15 * 60  # 15 phút
-
+app = Flask(__name__)
 
 def get_binance_candles(symbol, interval, limit):
     url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     resp = requests.get(url)
     if resp.status_code == 200:
         data = resp.json()
-        candles = []
-        for item in data:
-            candles.append({
-                "t": item[0],
-                "o": float(item[1]),
-                "h": float(item[2]),
-                "l": float(item[3]),
-                "c": float(item[4]),
-                "v": float(item[5])
-            })
+        candles = [{
+            "t": item[0],
+            "o": float(item[1]),
+            "h": float(item[2]),
+            "l": float(item[3]),
+            "c": float(item[4]),
+            "v": float(item[5])
+        } for item in data]
         return candles
     else:
         raise Exception(f"Binance API error: {resp.text}")
@@ -80,21 +81,25 @@ def send_telegram_message(message):
         print(f"[ERROR] Telegram send failed: {resp.text}")
 
 
-def auto_trading_decision():
-    candles = get_binance_candles(BINANCE_SYMBOL, INTERVAL, LIMIT)
-    print(f"[INFO] Fetched {len(candles)} candles {BINANCE_SYMBOL} {INTERVAL}")
-
-    analysis = analyze_with_llama4_maverick(candles)
-    print("[LLAMA-4 MAVERICK RESULT]", analysis)
-
-    message = f"*Auto Trading Result*\n\n{analysis}"
-    send_telegram_message(message)
-
-
-if __name__ == "__main__":
+def auto_trading_loop():
     while True:
         try:
-            auto_trading_decision()
+            candles = get_binance_candles(BINANCE_SYMBOL, INTERVAL, LIMIT)
+            print(f"[INFO] Fetched {len(candles)} candles {BINANCE_SYMBOL} {INTERVAL}")
+            analysis = analyze_with_llama4_maverick(candles)
+            print("[LLAMA-4 MAVERICK RESULT]", analysis)
+            message = f"*Auto Trading Result*\n\n{analysis}"
+            send_telegram_message(message)
         except Exception as e:
             print(f"[ERROR] {e}")
         time.sleep(INTERVAL_SECONDS)
+
+
+@app.route("/")
+def home():
+    return "Bot is running."
+
+
+if __name__ == "__main__":
+    threading.Thread(target=auto_trading_loop).start()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
