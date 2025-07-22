@@ -13,17 +13,22 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+RENDER_URL = os.getenv("RENDER_URL")  # Thêm dòng này để lấy URL chính xác app của bạn
 
 BINANCE_SYMBOL = os.getenv("BINANCE_SYMBOL") or 'BTCUSDT'
 INTERVAL = os.getenv("INTERVAL") or '15m'
 LIMIT = int(os.getenv("LIMIT") or 100)
 INTERVAL_SECONDS = int(os.getenv("INTERVAL_SECONDS") or (15 * 60))  # 15 phút
+PROB = int(os.getenv("PROB") or 60)  # 60%
 
 if not GROQ_API_KEY:
     raise Exception("Missing GROQ_API_KEY environment variable")
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise Exception("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID environment variable")
+
+if not RENDER_URL:
+    raise Exception("Missing RENDER_URL environment variable (e.g. https://your-app-name.onrender.com)")
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -55,8 +60,8 @@ def analyze_with_llama4_maverick(candles):
     {candle_json}
 
     Hãy trả lời dưới dạng JSON gồm:
-    {{"action": "long"|"short", "et": số, "sl": số, "tp1": số, "tp2": số, "tp3": số, "prob": %}}
-    Chỉ đề xuất nếu probability > 60%. Nếu không đủ tỉ lệ thì không cần đưa ra quyết định json.
+    {{"action": "long"|"short", "et": số, "sl": số, "tp1": số, "tp2": số, "tp3": số, "prob": %, "analysis": "các phân tích"}}
+    Chỉ đề xuất nếu probability > {PROB}%. Nếu không đủ tỉ lệ thì không cần đưa ra quyết định json.
     """
 
     response = client.chat.completions.create(
@@ -95,6 +100,16 @@ def auto_trading_loop():
         time.sleep(INTERVAL_SECONDS)
 
 
+def keep_alive_ping():
+    while True:
+        try:
+            requests.get(RENDER_URL)
+            print("[PING] Sent keep-alive ping to Render")
+        except Exception as e:
+            print(f"[PING ERROR] {e}")
+        time.sleep(600)  # Ping mỗi 10 phút
+
+
 @app.route("/")
 def home():
     return "Bot is running."
@@ -102,4 +117,5 @@ def home():
 
 if __name__ == "__main__":
     threading.Thread(target=auto_trading_loop).start()
+    threading.Thread(target=keep_alive_ping).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
